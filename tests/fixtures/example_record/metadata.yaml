@@ -1,0 +1,98 @@
+aiida_refs:
+  build_membrane_wc: null
+  compute_potential_wc: null
+  profile: null
+  run_md_wc: null
+artifacts:
+  potential_components:
+    path: potential_components.npz
+    sha256: 29d85b503230f686f5252e8ee8a5b01cf239484467a7af3f12f5d6af5ea8c2d3
+  potential_total:
+    path: potential_total.npz
+    sha256: 2548edcbe191381135e50d4e462bb67578639f92d598b602c3a52494ea427438
+    units:
+      phi: V
+      z: nm
+composition:
+  force_field: CHARMM36
+  ion_conc_M: 0.15
+  ion_type: NaCl
+  lower_leaflet:
+    lipids:
+      CDL2:
+        count: 20
+        fraction: 0.2
+      POPC:
+        count: 35
+        fraction: 0.35
+      POPE:
+        count: 45
+        fraction: 0.45
+  temperature_K: 310.15
+  upper_leaflet:
+    lipids:
+      CDL2:
+        count: 20
+        fraction: 0.2
+      POPC:
+        count: 40
+        fraction: 0.4
+      POPE:
+        count: 40
+        fraction: 0.4
+  water_model: TIP3
+created_at: '2026-06-01T12:00:00+00:00'
+id: 00000000-0000-0000-0000-000000000001
+notes: Hand-crafted fixture for unit testing.
+potential_meta:
+  axis: z
+  charge_group: SYSTEM
+  component_groups:
+  - MEMB
+  - Water
+  - ION
+  correct: true
+  slices: 100
+  source_tool: gmx potential
+  symmetrize: false
+protocols:
+  charmm_gui:
+    charmm_gui:
+      module: membrane_builder
+      quick_bilayer:
+        lower: POPE:POPC:CDL2=45:35:20
+        upper: POPE:POPC:CDL2=40:40:20
+    tracy:
+      expected_engine: gromacs
+  md: {}
+  potential:
+    tracy:
+      expected_engine: gromacs
+      membrane_normal_axis: z
+      potential_charge_group: SYSTEM
+      potential_component_groups:
+      - MEMB
+      - Water
+      - ION
+      potential_correct: true
+      potential_slices: 100
+      potential_symmetrize: false
+      trjconv_center_group: MEMB
+      trjconv_output_group: SYSTEM
+schema_version: 0.1.0
+scientific_hash: ''
+software:
+  aiida_core_version: null
+  aiida_gromacs_version: null
+  gromacs_version: '2021.7'
+  python_version: 3.11.0
+  remembrane_version: 0.1.0
+  tracy_version: null
+source_files:
+  tpr:
+    sha256: aaaa0000000000000000000000000000000000000000000000000000000000aa
+  xtc:
+    sha256: bbbb0000000000000000000000000000000000000000000000000000000000bb
+tags:
+- test
+- cardiolipin

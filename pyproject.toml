@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "remembrane"
+version = "0.1.0"
+description = "Scientific record store for membrane electrostatics"
+license = {file = "LICENSE"}
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.0",
+    "numpy>=1.24",
+    "click>=8.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+aiida = ["aiida-core>=2.0"]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+remembrane = "remembrane.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["remembrane*"]

@@ -1,0 +1,280 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import click
+import yaml
+
+DEFAULT_DB = Path.home() / ".remembrane"
+
+
+@click.group()
+@click.option("--db", default=str(DEFAULT_DB), show_default=True,
+              help="Path to remembrane database directory.")
+@click.pass_context
+def cli(ctx: click.Context, db: str) -> None:
+    ctx.ensure_object(dict)
+    ctx.obj["db"] = db
+
+
+@cli.command()
+@click.option("--path", default=None, help="Database path (overrides --db).")
+@click.pass_context
+def init(ctx: click.Context, path: str | None) -> None:
+    """Initialize a new remembrane database."""
+    from remembrane.registry import Registry
+    target = path or ctx.obj["db"]
+    Registry.init(target)
+    click.echo(f"Initialized remembrane database at {target}")
+
+
+@cli.command(name="list")
+@click.pass_context
+def list_records(ctx: click.Context) -> None:
+    """List all records in the database."""
+    from remembrane.registry import Registry
+    reg = Registry.open(ctx.obj["db"])
+    records = reg.list()
+    if not records:
+        click.echo("No records found.")
+        return
+    click.echo(f"{'ID':<38}  {'Scientific hash':<16}  Composition")
+    click.echo("-" * 80)
+    for rec in records:
+        comp = _composition_summary(rec)
+        click.echo(f"{str(rec.id):<38}  {rec.scientific_hash[:16]}  {comp}")
+
+
+@cli.command()
+@click.argument("record_id")
+@click.pass_context
+def show(ctx: click.Context, record_id: str) -> None:
+    """Show full metadata for a record."""
+    from remembrane.registry import Registry, RecordNotFoundError
+    reg = Registry.open(ctx.obj["db"])
+    try:
+        rec = reg.get(record_id)
+    except RecordNotFoundError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    click.echo(yaml.dump(rec.model_dump(mode="json"), default_flow_style=False))
+
+
+@cli.command()
+@click.option("--lipid", multiple=True, help="Require this lipid (repeatable).")
+@click.option("--min-fraction", nargs=2, metavar="LIPID FRAC",
+              help="Minimum combined leaflet fraction for a lipid, e.g. --min-fraction CDL2 0.15")
+@click.option("--force-field", default=None)
+@click.option("--temperature", type=float, default=None)
+@click.option("--tag", multiple=True)
+@click.pass_context
+def query(ctx: click.Context, lipid, min_fraction, force_field, temperature, tag) -> None:
+    """Query records by composition criteria."""
+    from remembrane.registry import Registry
+    from remembrane.query import filter_records
+    reg = Registry.open(ctx.obj["db"])
+    records = reg.list()
+    mf = (min_fraction[0], float(min_fraction[1])) if min_fraction else None
+    results = filter_records(
+        records,
+        lipid=list(lipid) or None,
+        min_fraction=mf,
+        force_field=force_field,
+        temperature_K=temperature,
+        tags=list(tag) or None,
+    )
+    if not results:
+        click.echo("No matching records.")
+        return
+    click.echo(f"{'ID':<38}  {'Scientific hash':<16}  Composition")
+    click.echo("-" * 80)
+    for rec in results:
+        click.echo(f"{str(rec.id):<38}  {rec.scientific_hash[:16]}  {_composition_summary(rec)}")
+
+
+@cli.command()
+@click.argument("record_dir")
+@click.pass_context
+def validate(ctx: click.Context, record_dir: str) -> None:
+    """Validate a candidate record directory before importing."""
+    from remembrane.record import MembraneRecord
+    from remembrane.storage import verify_artifact
+    errors = []
+    d = Path(record_dir)
+    meta_path = d / "metadata.yaml"
+    if not meta_path.exists():
+        click.echo(f"ERROR: metadata.yaml not found in {d}", err=True)
+        sys.exit(1)
+    try:
+        rec = MembraneRecord.from_yaml(meta_path)
+    except Exception as e:
+        click.echo(f"ERROR: metadata.yaml failed validation: {e}", err=True)
+        sys.exit(1)
+    for name, artifact in [
+        ("potential_total", rec.artifacts.potential_total),
+        ("potential_components", rec.artifacts.potential_components),
+    ]:
+        if not verify_artifact(d, artifact.path, artifact.sha256):
+            errors.append(f"Artifact checksum mismatch or missing: {artifact.path}")
+    if errors:
+        for e in errors:
+            click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"Valid: {d}")
+
+
+@cli.command(name="import")
+@click.argument("source", type=click.Choice(["directory", "aiida"]))
+@click.option("--pk", type=int, default=None, help="AiiDA PK (for 'aiida' source).")
+@click.option("--uuid", default=None, help="AiiDA UUID (for 'aiida' source).")
+@click.option("--path", default=None, help="Record directory path (for 'directory' source).")
+@click.pass_context
+def import_record(ctx: click.Context, source: str, pk: int | None, uuid: str | None,
+                  path: str | None) -> None:
+    """Import a record from a directory or AiiDA workchain."""
+    from remembrane.registry import Registry, DuplicateRecordError
+
+    reg = Registry.open(ctx.obj["db"])
+
+    if source == "directory":
+        if path is None:
+            click.echo("ERROR: --path required for 'directory' source.", err=True)
+            sys.exit(1)
+        from remembrane.record import MembraneRecord
+        from remembrane.storage import verify_artifact
+        d = Path(path)
+        rec = MembraneRecord.from_yaml(d / "metadata.yaml")
+        for artifact in [rec.artifacts.potential_total, rec.artifacts.potential_components]:
+            if not verify_artifact(d, artifact.path, artifact.sha256):
+                click.echo(f"ERROR: Artifact checksum mismatch: {artifact.path}", err=True)
+                sys.exit(1)
+        import shutil
+        try:
+            record_dir = reg.add(rec)
+        except DuplicateRecordError as e:
+            click.echo(f"ERROR: {e}", err=True)
+            sys.exit(1)
+        for fname in ["potential_total.npz", "potential_components.npz", "provenance.aiida"]:
+            src = d / fname
+            if src.exists():
+                shutil.copy2(src, record_dir / fname)
+        click.echo(f"Imported record {rec.id}")
+
+    elif source == "aiida":
+        identifier = uuid or pk
+        if identifier is None:
+            click.echo("ERROR: --pk or --uuid required for 'aiida' source.", err=True)
+            sys.exit(1)
+        try:
+            from remembrane.aiida.importer import from_potential_workchain
+        except ImportError:
+            click.echo(
+                "ERROR: AiiDA not available. Install remembrane[aiida] to use this command.",
+                err=True,
+            )
+            sys.exit(1)
+        from remembrane.aiida.importer import ImportIncompleteError
+        try:
+            rec, arrays = from_potential_workchain(identifier)
+        except ImportIncompleteError as e:
+            click.echo(f"ERROR: Import incomplete:\n{e}", err=True)
+            sys.exit(1)
+        try:
+            record_dir = reg.add(rec)
+        except DuplicateRecordError as e:
+            click.echo(f"ERROR: {e}", err=True)
+            sys.exit(1)
+        from remembrane.storage import save_potential_total, save_potential_components
+        sha_total = save_potential_total(record_dir, arrays["z_nm"], arrays["phi_V"])
+        sha_comp = save_potential_components(record_dir, arrays["components"], arrays["z_nm"])
+        # Update checksums in saved metadata
+        rec.artifacts.potential_total.sha256 = sha_total
+        rec.artifacts.potential_components.sha256 = sha_comp
+        rec.to_yaml(record_dir / "metadata.yaml")
+        click.echo(f"Imported record {rec.id}")
+
+
+@cli.command()
+@click.argument("record_id")
+@click.pass_context
+def verify(ctx: click.Context, record_id: str) -> None:
+    """Verify stored artifacts match recorded checksums."""
+    from remembrane.registry import Registry, RecordNotFoundError
+    from remembrane.storage import verify_artifact
+    import numpy as np
+
+    reg = Registry.open(ctx.obj["db"])
+    try:
+        rec = reg.get(record_id)
+    except RecordNotFoundError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    d = reg.record_dir(record_id)
+    errors = []
+
+    for name, artifact in [
+        ("potential_total", rec.artifacts.potential_total),
+        ("potential_components", rec.artifacts.potential_components),
+    ]:
+        if not verify_artifact(d, artifact.path, artifact.sha256):
+            errors.append(f"{name}: checksum mismatch or file missing")
+
+    # Array shape compatibility check
+    total_path = d / "potential_total.npz"
+    comp_path = d / "potential_components.npz"
+    if total_path.exists() and comp_path.exists():
+        total = np.load(total_path)
+        comp = np.load(comp_path)
+        if "z_nm" not in total or "phi_V" not in total:
+            errors.append("potential_total.npz: missing z_nm or phi_V keys")
+        if "z_nm" not in comp:
+            errors.append("potential_components.npz: missing z_nm key")
+        elif "z_nm" in total and total["z_nm"].shape != comp["z_nm"].shape:
+            errors.append("potential_total and potential_components have incompatible z grids")
+
+    if errors:
+        for e in errors:
+            click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+    click.echo(f"OK: {record_id}")
+
+
+@cli.group(name="export")
+def export_group() -> None:
+    """Export records or provenance archives."""
+
+
+@export_group.command(name="aiida-archive")
+@click.argument("record_id")
+@click.option("--output", default=None, help="Output path for .aiida archive.")
+@click.pass_context
+def export_aiida_archive(ctx: click.Context, record_id: str, output: str | None) -> None:
+    """Export AiiDA provenance archive for a record."""
+    from remembrane.registry import Registry, RecordNotFoundError
+    reg = Registry.open(ctx.obj["db"])
+    try:
+        rec = reg.get(record_id)
+    except RecordNotFoundError as e:
+        click.echo(str(e), err=True)
+        sys.exit(1)
+    if rec.aiida_refs.compute_potential_wc is None:
+        click.echo("ERROR: No AiiDA UUID stored for this record.", err=True)
+        sys.exit(1)
+    try:
+        from remembrane.aiida.export import export_provenance_archive
+    except ImportError:
+        click.echo(
+            "ERROR: AiiDA not available. Install remembrane[aiida] to use this command.",
+            err=True,
+        )
+        sys.exit(1)
+    out_path = output or str(reg.record_dir(record_id) / "provenance.aiida")
+    export_provenance_archive(rec.aiida_refs.compute_potential_wc, out_path)
+    click.echo(f"Archive written to {out_path}")
+
+
+def _composition_summary(rec) -> str:
+    upper = rec.composition.upper_leaflet.lipids
+    parts = "+".join(f"{n}:{v.fraction:.2f}" for n, v in upper.items())
+    return f"{rec.composition.force_field} T={rec.composition.temperature_K}K [{parts}]"
