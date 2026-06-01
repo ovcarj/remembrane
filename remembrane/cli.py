@@ -274,6 +274,56 @@ def export_aiida_archive(ctx: click.Context, record_id: str, output: str | None)
     click.echo(f"Archive written to {out_path}")
 
 
+@export_group.command(name="json")
+@click.option("--all", "export_all", is_flag=True, default=False, help="Export all records.")
+@click.option("--output", default=None, help="Output file path (default: stdout).")
+@click.option("--lipid", multiple=True, help="Filter: require this lipid.")
+@click.pass_context
+def export_json(ctx: click.Context, export_all: bool, output: str | None, lipid) -> None:
+    """Export records as JSON."""
+    from remembrane.registry import Registry
+    from remembrane.query import filter_records
+    from remembrane.export import records_to_json
+
+    reg = Registry.open(ctx.obj["db"])
+    records = reg.list()
+    if not export_all and lipid:
+        records = filter_records(records, lipid=list(lipid))
+    elif not export_all and not lipid:
+        pass  # export all by default when no filter given
+
+    result = records_to_json(records)
+    if output:
+        Path(output).write_text(result)
+        click.echo(f"Wrote {len(records)} record(s) to {output}")
+    else:
+        click.echo(result)
+
+
+@export_group.command(name="csv")
+@click.option("--all", "export_all", is_flag=True, default=False, help="Export all records.")
+@click.option("--output", default=None, help="Output file path (default: stdout).")
+@click.option("--lipid", multiple=True, help="Filter: require this lipid.")
+@click.pass_context
+def export_csv(ctx: click.Context, export_all: bool, output: str | None, lipid) -> None:
+    """Export records as CSV (composition + potential metadata, one row per record)."""
+    from remembrane.registry import Registry
+    from remembrane.query import filter_records
+    from remembrane.export import records_to_csv
+
+    reg = Registry.open(ctx.obj["db"])
+    records = reg.list()
+    if not export_all and lipid:
+        records = filter_records(records, lipid=list(lipid))
+
+    result = records_to_csv(records)
+    if output:
+        Path(output).write_text(result)
+        click.echo(f"Wrote {len(records)} record(s) to {output}")
+    else:
+        click.echo(result, nl=False)
+
+
 def _composition_summary(rec) -> str:
     upper = rec.composition.upper_leaflet.lipids
     parts = "+".join(f"{n}:{v.fraction:.2f}" for n, v in upper.items())
