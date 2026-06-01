@@ -39,11 +39,14 @@ def plot_arrays(
     line, = ax.plot(z_nm, phi_V, lw=1.8, label=label or "_nolegend_", **kw)
 
     if components:
-        comp_color = line.get_color()
-        for group, phi_comp in components.items():
+        prop_cycle = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+        used = {line.get_color()}
+        avail = [c for c in prop_cycle if c not in used]
+        for i, (group, phi_comp) in enumerate(components.items()):
             ax.plot(
                 z_nm, phi_comp,
-                lw=1.0, ls="--", alpha=0.65, color=comp_color,
+                lw=1.0, ls="--", alpha=0.75,
+                color=avail[i % len(avail)],
                 label=f"{label} / {group}" if label else group,
             )
 
