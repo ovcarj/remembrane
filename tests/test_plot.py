@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from remembrane.record import MembraneRecord
-from remembrane.plot import plot_profile, plot_comparison, _short_label
+from remembrane.plot import plot_arrays, plot_profile, plot_comparison, _short_label
 from remembrane.storage import save_potential_total, save_potential_components
 
 FIXTURE_META = Path(__file__).parent / "fixtures" / "example_record" / "metadata.yaml"
@@ -115,3 +115,53 @@ def test_plot_profile_missing_matplotlib_raises():
             import importlib
             importlib.reload(plot_mod)
             plot_mod._require_matplotlib()
+
+
+# ── plot_arrays tests ─────────────────────────────────────────────────────────
+
+def test_plot_arrays_returns_figure():
+    z = np.linspace(0, 7.5, 100)
+    phi = np.sin(z)
+    fig = plot_arrays(z, phi)
+    assert isinstance(fig, plt.Figure)
+    plt.close("all")
+
+
+def test_plot_arrays_no_components_one_line():
+    z = np.linspace(0, 7.5, 100)
+    phi = np.sin(z)
+    fig = plot_arrays(z, phi, label="total")
+    ax = fig.axes[0]
+    labeled = [l for l in ax.lines if not l.get_label().startswith("_")]
+    assert len(labeled) == 1
+    plt.close("all")
+
+
+def test_plot_arrays_with_components():
+    z = np.linspace(0, 7.5, 100)
+    phi = np.sin(z)
+    comps = {"MEMB": phi * 2, "Water": -phi}
+    fig = plot_arrays(z, phi, comps, label="total")
+    ax = fig.axes[0]
+    labeled = [l for l in ax.lines if not l.get_label().startswith("_")]
+    assert len(labeled) == 3   # total + 2 components
+    plt.close("all")
+
+
+def test_plot_arrays_custom_label_in_legend():
+    z = np.linspace(0, 7.5, 50)
+    phi = np.zeros(50)
+    fig = plot_arrays(z, phi, label="my label")
+    ax = fig.axes[0]
+    labels = [l.get_label() for l in ax.lines]
+    assert "my label" in labels
+    plt.close("all")
+
+
+def test_plot_arrays_accepts_external_axes():
+    z = np.linspace(0, 7.5, 50)
+    phi = np.zeros(50)
+    fig_ext, ax_ext = plt.subplots()
+    fig_returned = plot_arrays(z, phi, ax=ax_ext)
+    assert fig_returned is fig_ext
+    plt.close("all")

@@ -48,12 +48,18 @@ def from_potential_workchain(
     Raises ImportError if aiida-core is not installed.
     """
     try:
+        import aiida
         from aiida import orm
     except ImportError as exc:
         raise ImportError(
             "aiida-core is required for AiiDA import. "
             "Install it with: pip install remembrane[aiida]"
         ) from exc
+
+    try:
+        aiida.load_profile()
+    except Exception:
+        pass  # profile already loaded, or using a custom manager
 
     import numpy as np
     from remembrane.parsers.xvg import parse_xvg

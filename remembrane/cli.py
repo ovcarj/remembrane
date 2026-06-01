@@ -413,6 +413,55 @@ def plot_cmd(ctx: click.Context, record_ids, lipid, min_fraction, force_field,
         plt.show()
 
 
+@cli.command()
+@click.option("--pk", type=int, default=None, help="AiiDA PK of the ComputeMembranePotentialWorkChain.")
+@click.option("--uuid", default=None, help="AiiDA UUID of the workchain.")
+@click.option("--components", is_flag=True, default=False, help="Show decomposed component profiles.")
+@click.option("--title", default=None, help="Figure title (default: auto-generated from PK).")
+@click.option("--output", default=None, help="Save to file instead of showing interactively.")
+def preview(pk: int | None, uuid: str | None, components: bool, title: str | None,
+            output: str | None) -> None:
+    """Preview a potential profile directly from AiiDA without importing it.
+
+    Use this to quickly inspect a ComputeMembranePotentialWorkChain result
+    before deciding whether to add it to the database.
+
+    Examples:\n
+      remembrane preview --pk 1894\n
+      remembrane preview --pk 1894 --components --output /tmp/preview.png
+    """
+    identifier = uuid or pk
+    if identifier is None:
+        click.echo("ERROR: Provide --pk or --uuid.", err=True)
+        sys.exit(1)
+
+    try:
+        from remembrane.aiida.preview import preview_from_workchain
+    except ImportError:
+        click.echo(
+            "ERROR: AiiDA not available. Install remembrane[aiida] to use this command.",
+            err=True,
+        )
+        sys.exit(1)
+
+    try:
+        fig, label = preview_from_workchain(identifier, components=components)
+    except Exception as e:
+        click.echo(f"ERROR: {e}", err=True)
+        sys.exit(1)
+
+    if title:
+        fig.axes[0].set_title(title)
+        fig.tight_layout()
+
+    if output:
+        fig.savefig(output, dpi=150, bbox_inches="tight")
+        click.echo(f"Saved to {output}")
+    else:
+        import matplotlib.pyplot as plt
+        plt.show()
+
+
 def _composition_summary(rec) -> str:
     upper = rec.composition.upper_leaflet.lipids
     parts = "+".join(f"{n}:{v.fraction:.2f}" for n, v in upper.items())

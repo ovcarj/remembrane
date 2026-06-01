@@ -9,6 +9,50 @@ if TYPE_CHECKING:
     from remembrane.record import MembraneRecord
 
 
+def plot_arrays(
+    z_nm: "np.ndarray",
+    phi_V: "np.ndarray",
+    components: "dict[str, np.ndarray] | None" = None,
+    *,
+    label: str = "",
+    ax=None,
+    color=None,
+    title: str = "Electrostatic potential",
+) -> "Figure":
+    """Plot (z_nm, phi_V) arrays directly.
+
+    components maps group name → phi array (sharing the same z grid).
+    Component curves are dashed, at reduced opacity, in the same color as the total.
+    If ax is provided, draws into it; otherwise creates a new Figure.
+    Returns the Figure.
+    """
+    import numpy as np
+    plt = _require_matplotlib()
+
+    created_fig = ax is None
+    if created_fig:
+        fig, ax = plt.subplots(figsize=(7, 4))
+    else:
+        fig = ax.get_figure()
+
+    kw = dict(color=color) if color is not None else {}
+    line, = ax.plot(z_nm, phi_V, lw=1.8, label=label or "_nolegend_", **kw)
+
+    if components:
+        comp_color = line.get_color()
+        for group, phi_comp in components.items():
+            ax.plot(
+                z_nm, phi_comp,
+                lw=1.0, ls="--", alpha=0.65, color=comp_color,
+                label=f"{label} / {group}" if label else group,
+            )
+
+    if created_fig:
+        _style_axes(ax, title)
+
+    return fig
+
+
 def plot_profile(
     record: "MembraneRecord",
     record_dir: Path,
@@ -25,41 +69,26 @@ def plot_profile(
     If ax is provided the plot is drawn into it; otherwise a new Figure is created.
     Returns the Figure.
     """
-    plt = _require_matplotlib()
-
     from remembrane.storage import load_potential_total, load_potential_components
 
     record_dir = Path(record_dir)
     z_nm, phi_V = load_potential_total(record_dir)
-
-    created_fig = ax is None
-    if created_fig:
-        fig, ax = plt.subplots(figsize=(7, 4))
-    else:
-        fig = ax.get_figure()
-
     lbl = label if label is not None else _short_label(record)
-    kw = dict(color=color) if color is not None else {}
-    line, = ax.plot(z_nm, phi_V, lw=1.8, label=lbl, **kw)
 
+    comp_dict = None
     if components:
-        comp_data = load_potential_components(record_dir)
-        comp_color = line.get_color()
-        for group in record.potential_meta.component_groups:
-            if group in comp_data:
-                ax.plot(
-                    comp_data["z_nm"],
-                    comp_data[group],
-                    lw=1.0,
-                    ls="--",
-                    alpha=0.65,
-                    color=comp_color,
-                    label=f"{lbl} / {group}",
-                )
+        raw = load_potential_components(record_dir)
+        comp_dict = {
+            group: raw[group]
+            for group in record.potential_meta.component_groups
+            if group in raw
+        }
 
-    if created_fig:
-        _style_axes(ax, title or "Electrostatic potential")
-
+    fig = plot_arrays(
+        z_nm, phi_V, comp_dict,
+        label=lbl, ax=ax, color=color,
+        title=title or "Electrostatic potential",
+    )
     return fig
 
 
@@ -121,7 +150,9 @@ def _style_axes(ax, title: str) -> None:
     ax.set_ylabel("φ (V)")
     ax.set_title(title)
     ax.axhline(0, color="black", lw=0.5, ls="--", zorder=0)
-    ax.legend(fontsize=8)
+    handles, labels = ax.get_legend_handles_labels()
+    if handles:
+        ax.legend(fontsize=8)
     ax.get_figure().tight_layout()
 
 
