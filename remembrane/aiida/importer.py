@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import platform
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -34,18 +33,22 @@ class ImportIncompleteError(Exception):
 
 def from_potential_workchain(
     uuid_or_pk: str | int,
+    build_membrane_pk: int | None = None,
+    run_md_pk: int | None = None,
 ) -> tuple[Any, dict]:
     """Import a MembraneRecord from a ComputeMembranePotentialWorkChain node.
 
-    Returns (MembraneRecord, arrays) where arrays contains:
+    Returns (MembraneRecord, arrays) where arrays has keys:
       z_nm, phi_V, components: dict[str, ndarray]
 
-    Raises ImportIncompleteError if provenance is incomplete.
+    build_membrane_pk / run_md_pk: explicit PKs for ancestor workchains when
+    they are not in the automatic provenance graph (e.g. standalone submissions).
+
+    Raises ImportIncompleteError if required fields cannot be resolved.
     Raises ImportError if aiida-core is not installed.
     """
     try:
         from aiida import orm
-        from aiida.manage import get_manager
     except ImportError as exc:
         raise ImportError(
             "aiida-core is required for AiiDA import. "
@@ -63,7 +66,6 @@ def from_potential_workchain(
     missing_artifacts: list[str] = []
     diagnostics: list[str] = []
 
-    # Load the workchain node
     node = orm.load_node(uuid_or_pk)
     wc_uuid = str(node.uuid)
 
@@ -71,6 +73,7 @@ def from_potential_workchain(
     if "potential_report" not in node.outputs:
         missing_fields.append("potential_meta")
         diagnostics.append("potential_report output missing from workchain node")
+        report = {}
     else:
         report = node.outputs.potential_report.get_dict()
 
@@ -78,25 +81,38 @@ def from_potential_workchain(
         missing_artifacts.append("potential_total.npz (source: potential_profile xvg)")
         diagnostics.append("potential_profile output missing")
 
-    # ── Walk provenance graph ───────────────────────────────────────────────
-    run_md_uuid = None
-    build_membrane_uuid = None
+    # ── Walk provenance graph, then fall back to explicit PKs ───────────────
     run_md_node = None
     build_node = None
+    run_md_uuid = None
+    build_membrane_uuid = None
 
+    # Auto-walk caller chain
     caller = node.caller
     while caller is not None:
-        label = caller.process_label or ""
-        if "RunMembraneMDWorkChain" in label and run_md_uuid is None:
-            run_md_uuid = str(caller.uuid)
+        label = getattr(caller, "process_label", "") or ""
+        if "RunMembraneMDWorkChain" in label and run_md_node is None:
             run_md_node = caller
-        if "BuildMembraneWorkChain" in label and build_membrane_uuid is None:
-            build_membrane_uuid = str(caller.uuid)
+            run_md_uuid = str(caller.uuid)
+        if "BuildMembraneWorkChain" in label and build_node is None:
             build_node = caller
+            build_membrane_uuid = str(caller.uuid)
         caller = caller.caller if hasattr(caller, "caller") else None
 
+    # Fall back to explicit PKs when not in graph
+    if run_md_node is None and run_md_pk is not None:
+        run_md_node = orm.load_node(run_md_pk)
+        run_md_uuid = str(run_md_node.uuid)
+
+    if build_node is None and build_membrane_pk is not None:
+        build_node = orm.load_node(build_membrane_pk)
+        build_membrane_uuid = str(build_node.uuid)
+
     if build_node is None:
-        diagnostics.append("BuildMembraneWorkChain not found in provenance graph")
+        diagnostics.append(
+            "BuildMembraneWorkChain not found in provenance graph. "
+            "Pass build_membrane_pk= explicitly if available."
+        )
 
     # ── Composition ─────────────────────────────────────────────────────────
     composition = None
@@ -104,7 +120,10 @@ def from_potential_workchain(
     if build_node is not None:
         try:
             system_meta = build_node.outputs.system_metadata.get_dict()
-            protocols_charmm = build_node.inputs.protocol.get_dict() if hasattr(build_node.inputs, "protocol") else None
+            protocols_charmm = (
+                build_node.inputs.protocol.get_dict()
+                if hasattr(build_node.inputs, "protocol") else None
+            )
             composition = _extract_composition(system_meta, protocols_charmm)
         except Exception as exc:
             missing_fields.append("composition")
@@ -117,9 +136,6 @@ def from_potential_workchain(
     protocols_md = None
     if run_md_node is not None and hasattr(run_md_node.inputs, "protocol"):
         protocols_md = run_md_node.inputs.protocol.get_dict()
-    else:
-        if run_md_uuid is None:
-            diagnostics.append("RunMembraneMDWorkChain not found in provenance graph")
 
     # ── Potential protocol ───────────────────────────────────────────────────
     protocols_potential = None
@@ -130,49 +146,27 @@ def from_potential_workchain(
 
     # ── Source file hashes ───────────────────────────────────────────────────
     source_files: dict[str, FileHash] = {}
-    for attr_name, key in [
-        ("tpr_file", "tpr"),
-        ("trajectory", "xtc"),
-    ]:
+    for attr_name, key in [("tpr_file", "tpr"), ("trajectory_compressed", "xtc")]:
         if hasattr(node.inputs, attr_name):
-            node_obj = getattr(node.inputs, attr_name)
-            sha = _hash_singlefile_node(node_obj)
+            sha = _hash_singlefile_node(getattr(node.inputs, attr_name))
             if sha:
                 source_files[key] = FileHash(sha256=sha)
-
-    # ── Software versions ───────────────────────────────────────────────────
-    software = _collect_software_versions()
 
     # ── Fail if anything critical is missing ────────────────────────────────
     if missing_fields or missing_artifacts:
         raise ImportIncompleteError(missing_fields, missing_artifacts, diagnostics)
 
     # ── Parse XVG data ──────────────────────────────────────────────────────
-    total_path = node.outputs.potential_profile.get_content()
-    if isinstance(total_path, bytes):
-        import tempfile, os
-        tmp = tempfile.NamedTemporaryFile(suffix=".xvg", delete=False)
-        tmp.write(total_path)
-        tmp.close()
-        z_nm, phi_V = parse_xvg(tmp.name)
-        os.unlink(tmp.name)
-    else:
-        z_nm, phi_V = parse_xvg(total_path)
+    z_nm, phi_V = _parse_xvg_node(node.outputs.potential_profile, parse_xvg)
 
     components: dict[str, np.ndarray] = {}
     if hasattr(node.outputs, "potential_components"):
         for label, comp_node in node.outputs.potential_components.items():
-            content = comp_node.get_content()
-            if isinstance(content, bytes):
-                import tempfile, os
-                tmp = tempfile.NamedTemporaryFile(suffix=".xvg", delete=False)
-                tmp.write(content)
-                tmp.close()
-                _, phi = parse_xvg(tmp.name)
-                os.unlink(tmp.name)
-            else:
-                _, phi = parse_xvg(content)
+            _, phi = _parse_xvg_node(comp_node, parse_xvg)
             components[label] = phi
+
+    # ── Software versions ────────────────────────────────────────────────────
+    software = _collect_software_versions()
 
     # ── Assemble record ──────────────────────────────────────────────────────
     pot_meta = PotentialMeta(
@@ -211,13 +205,11 @@ def from_potential_workchain(
         aiida_refs=aiida_refs,
     )
 
-    arrays = {
-        "z_nm": z_nm,
-        "phi_V": phi_V,
-        "components": components,
-    }
+    arrays = {"z_nm": z_nm, "phi_V": phi_V, "components": components}
     return record, arrays
 
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _extract_composition(system_meta: dict, protocol: dict | None):
     from remembrane.record import Composition, Leaflet, LipidCount
@@ -229,21 +221,34 @@ def _extract_composition(system_meta: dict, protocol: dict | None):
     upper = _parse_lipid_ratio(upper_str)
     lower = _parse_lipid_ratio(lower_str)
 
+    force_field = system_meta.get("force_field", "CHARMM36")
+    water_model = system_meta.get("water_model", "TIP3")
+    temperature_K = float(charmm_params.get("temperature", system_meta.get("temperature_K", 310.15)))
+    ion_type = str(charmm_params.get("ion_type", system_meta.get("ion_type", "")))
+    ion_conc_M = float(charmm_params.get("ion_conc", system_meta.get("ion_conc_M", 0.0)))
+
     return Composition(
         upper_leaflet=Leaflet(lipids=upper),
         lower_leaflet=Leaflet(lipids=lower),
-        force_field=system_meta.get("force_field", "CHARMM36"),
-        water_model=system_meta.get("water_model", "TIP3"),
-        temperature_K=float(charmm_params.get("temperature", system_meta.get("temperature_K", 310.15))),
-        ion_type=charmm_params.get("ion_type", system_meta.get("ion_type", "")),
-        ion_conc_M=float(charmm_params.get("ion_conc", system_meta.get("ion_conc_M", 0.0))),
+        force_field=force_field,
+        water_model=water_model,
+        temperature_K=temperature_K,
+        ion_type=ion_type,
+        ion_conc_M=ion_conc_M,
     )
 
 
 def _parse_lipid_ratio(spec: str) -> dict:
-    """Parse 'POPE:POPC:CDL2=40:40:20' into {POPE: LipidCount(...), ...}."""
+    """Parse CHARMM-GUI quick_bilayer composition strings.
+
+    Handles both:
+      'POPE:POPC:CDL2=40:40:20'  (multi-lipid)
+      'POPC=128'                  (single lipid)
+    """
     from remembrane.record import LipidCount
-    if not spec or "=" not in spec:
+    if not spec:
+        return {}
+    if "=" not in spec:
         return {}
     names_part, counts_part = spec.split("=", 1)
     names = [n.strip() for n in names_part.split(":")]
@@ -253,6 +258,22 @@ def _parse_lipid_ratio(spec: str) -> dict:
         name: LipidCount(count=count, fraction=round(count / total, 6))
         for name, count in zip(names, counts)
     }
+
+
+def _parse_xvg_node(node, parse_xvg_fn) -> tuple:
+    import tempfile, os
+    import numpy as np
+    try:
+        content = node.get_content(mode="rb")
+    except TypeError:
+        content = node.get_content().encode() if isinstance(node.get_content(), str) else node.get_content()
+    tmp = tempfile.NamedTemporaryFile(suffix=".xvg", delete=False)
+    try:
+        tmp.write(content)
+        tmp.close()
+        return parse_xvg_fn(tmp.name)
+    finally:
+        os.unlink(tmp.name)
 
 
 def _hash_singlefile_node(node) -> str | None:
@@ -276,7 +297,7 @@ def _collect_software_versions() -> Any:
     return SoftwareVersions(
         remembrane_version=_ver("remembrane") or "unknown",
         tracy_version=_ver("tracy"),
-        gromacs_version=None,  # extracted from AiiDA node extras when available
+        gromacs_version=None,
         aiida_core_version=_ver("aiida-core"),
         aiida_gromacs_version=_ver("aiida-gromacs"),
         python_version=platform.python_version(),
