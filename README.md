@@ -48,7 +48,7 @@ remembrane init
 # → creates ~/.remembrane/
 
 # Import a ComputeMembranePotentialWorkChain by AiiDA PK
-remembrane import aiida --pk 1894
+remembrane import aiida --pk <pk>
 
 # List all records
 remembrane list
@@ -143,7 +143,7 @@ software:
   python_version: "3.11.0"
 
 aiida_refs:
-  profile: "essil"
+  profile: "<aiida-profile>"
   build_membrane_wc: "<uuid>"
   run_md_wc: "<uuid>"
   compute_potential_wc: "<uuid>"
@@ -244,7 +244,7 @@ results = filter_records(
 from remembrane.aiida.importer import from_potential_workchain, ImportIncompleteError
 
 try:
-    record, arrays = from_potential_workchain(pk=1894)
+    record, arrays = from_potential_workchain(pk=<pk>)
     # arrays: {"z_nm": ndarray, "phi_V": ndarray, "components": {"MEMB": ..., ...}}
 except ImportIncompleteError as e:
     print(e)   # lists missing_fields, missing_artifacts, diagnostics
@@ -254,7 +254,7 @@ When `BuildMembraneWorkChain` is not in the automatic provenance graph (standalo
 submission), pass it explicitly:
 
 ```python
-record, arrays = from_potential_workchain(pk=1894, build_membrane_pk=1252)
+record, arrays = from_potential_workchain(pk=<potential_pk>, build_membrane_pk=<build_pk>)
 ```
 
 ### Export
@@ -326,4 +326,4 @@ pip install -e ".[dev]"
 pytest tests/
 ```
 
-Practical integration tests (requiring a live AiiDA instance with tracy calculations) are in `~/Documents/2026_06_remembrane_tests/` and are not part of the package test suite.
+Practical integration tests requiring a live AiiDA instance with tracy calculations are not part of the package test suite.
