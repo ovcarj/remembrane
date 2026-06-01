@@ -32,11 +32,19 @@ class ImportIncompleteError(Exception):
 
 
 def from_potential_workchain(
-    uuid_or_pk: str | int,
+    uuid_or_pk: str | int | None = None,
     build_membrane_pk: int | None = None,
     run_md_pk: int | None = None,
+    *,
+    pk: int | None = None,
+    uuid: str | None = None,
 ) -> tuple[Any, dict]:
     """Import a MembraneRecord from a ComputeMembranePotentialWorkChain node.
+
+    Accepts the workchain identifier as a positional argument or as pk=/uuid=:
+      from_potential_workchain(1894)
+      from_potential_workchain(pk=1894)
+      from_potential_workchain(uuid="abc-...")
 
     Returns (MembraneRecord, arrays) where arrays has keys:
       z_nm, phi_V, components: dict[str, ndarray]
@@ -47,6 +55,12 @@ def from_potential_workchain(
     Raises ImportIncompleteError if required fields cannot be resolved.
     Raises ImportError if aiida-core is not installed.
     """
+    if pk is not None:
+        uuid_or_pk = pk
+    elif uuid is not None:
+        uuid_or_pk = uuid
+    if uuid_or_pk is None:
+        raise ValueError("Provide the workchain identifier as a positional argument, pk=, or uuid=")
     try:
         import aiida
         from aiida import orm
