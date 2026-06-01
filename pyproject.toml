@@ -17,10 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 aiida = ["aiida-core>=2.0"]
-dev = [
-    "pytest>=7.0",
-    "pytest-cov",
-]
+plot  = ["matplotlib>=3.5"]
+dev   = ["pytest>=7.0", "pytest-cov", "matplotlib>=3.5"]
 
 [project.scripts]
 remembrane = "remembrane.cli:cli"

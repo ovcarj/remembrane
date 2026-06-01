@@ -324,6 +324,95 @@ def export_csv(ctx: click.Context, export_all: bool, output: str | None, lipid) 
         click.echo(result, nl=False)
 
 
+@cli.command(name="plot")
+@click.argument("record_ids", nargs=-1)
+@click.option("--lipid", multiple=True, help="Query: require this lipid (repeatable).")
+@click.option("--min-fraction", nargs=2, metavar="LIPID FRAC",
+              help="Query: minimum combined leaflet fraction.")
+@click.option("--force-field", default=None, help="Query: filter by force field.")
+@click.option("--temperature", type=float, default=None, help="Query: filter by temperature (K).")
+@click.option("--tag", multiple=True, help="Query: require this tag (repeatable).")
+@click.option("--components", is_flag=True, default=False,
+              help="Show decomposed component profiles.")
+@click.option("--title", default=None, help="Figure title.")
+@click.option("--output", default=None,
+              help="Save to file (PNG, PDF, SVG…) instead of showing interactively.")
+@click.pass_context
+def plot_cmd(ctx: click.Context, record_ids, lipid, min_fraction, force_field,
+             temperature, tag, components, title, output) -> None:
+    """Plot electrostatic potential profiles.
+
+    Pass record IDs to plot specific records, or use query options (--lipid, etc.)
+    to select by composition. The two modes are mutually exclusive.
+
+    Examples:\n
+      remembrane plot <id>\n
+      remembrane plot <id> --components --output profile.png\n
+      remembrane plot --lipid POPC --output comparison.png\n
+      remembrane plot <id1> <id2>
+    """
+    from remembrane.registry import Registry, RecordNotFoundError
+    from remembrane.query import filter_records
+
+    has_ids = bool(record_ids)
+    has_query = bool(lipid or min_fraction or force_field or temperature or tag)
+
+    if has_ids and has_query:
+        click.echo("ERROR: Provide either record IDs or query options, not both.", err=True)
+        sys.exit(1)
+    if not has_ids and not has_query:
+        click.echo("ERROR: Provide at least one record ID or a query option.", err=True)
+        sys.exit(1)
+
+    try:
+        from remembrane.plot import plot_profile, plot_comparison
+    except ImportError:
+        click.echo(
+            "ERROR: matplotlib is required for plotting. "
+            "Install it with: pip install remembrane[plot]",
+            err=True,
+        )
+        sys.exit(1)
+
+    reg = Registry.open(ctx.obj["db"])
+
+    if has_ids:
+        records = []
+        for rid in record_ids:
+            try:
+                records.append(reg.get(rid))
+            except RecordNotFoundError as e:
+                click.echo(f"ERROR: {e}", err=True)
+                sys.exit(1)
+    else:
+        mf = (min_fraction[0], float(min_fraction[1])) if min_fraction else None
+        records = filter_records(
+            reg.list(),
+            lipid=list(lipid) or None,
+            min_fraction=mf,
+            force_field=force_field,
+            temperature_K=temperature,
+            tags=list(tag) or None,
+        )
+        if not records:
+            click.echo("No records match the query.")
+            return
+
+    record_dirs = [reg.record_dir(rec.id) for rec in records]
+
+    if len(records) == 1:
+        fig = plot_profile(records[0], record_dirs[0], components=components, title=title)
+    else:
+        fig = plot_comparison(records, record_dirs, components=components, title=title)
+
+    if output:
+        fig.savefig(output, dpi=150, bbox_inches="tight")
+        click.echo(f"Saved to {output}")
+    else:
+        import matplotlib.pyplot as plt
+        plt.show()
+
+
 def _composition_summary(rec) -> str:
     upper = rec.composition.upper_leaflet.lipids
     parts = "+".join(f"{n}:{v.fraction:.2f}" for n, v in upper.items())

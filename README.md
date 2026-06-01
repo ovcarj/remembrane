@@ -27,7 +27,10 @@ pip install remembrane
 # With AiiDA import bridge
 pip install "remembrane[aiida]"
 
-# Development
+# With plotting
+pip install "remembrane[plot]"
+
+# Development (includes matplotlib)
 pip install -e ".[dev]"
 ```
 
@@ -173,13 +176,19 @@ remembrane export aiida-archive RECORD_ID [--output PATH]
 remembrane export json [--output PATH] [--lipid LIPID ...]
 remembrane export csv  [--output PATH] [--lipid LIPID ...]
 
-remembrane query options:
+remembrane plot RECORD_ID [RECORD_ID ...]   [--components] [--title TEXT] [--output PATH]
+remembrane plot --lipid LIPID ...           [--components] [--title TEXT] [--output PATH]
+
+remembrane query/plot filter options (shared):
   --lipid NAME            Require this lipid (repeatable, all must match).
   --min-fraction NAME F   Minimum combined leaflet fraction for a lipid.
   --force-field NAME
   --temperature K
   --tag NAME              Require this tag (repeatable).
 ```
+
+`plot` accepts either positional record IDs **or** query filter options — not both.
+`--output` saves to a file (PNG, PDF, SVG); without it the plot is shown interactively.
 
 ---
 
@@ -262,6 +271,34 @@ from remembrane.storage import load_potential_total, load_potential_components
 z_nm, phi_V = load_potential_total(reg.record_dir(record.id))
 components   = load_potential_components(reg.record_dir(record.id))
 # components["MEMB"], components["Water"], components["ION"], components["z_nm"]
+```
+
+### Plotting (`remembrane[plot]`)
+
+```python
+from remembrane.plot import plot_profile, plot_comparison
+
+# Single profile
+fig = plot_profile(record, reg.record_dir(record.id))
+fig = plot_profile(record, reg.record_dir(record.id), components=True)
+
+# Overlay multiple records
+records = reg.query(lipid="CDL2")
+dirs    = [reg.record_dir(r.id) for r in records]
+fig     = plot_comparison(records, dirs)
+
+# Custom legend labels
+fig = plot_comparison(records, dirs,
+                      label_fn=lambda r: r.notes or str(r.id)[:8])
+
+# Reuse an external Axes (e.g. in a subplot grid)
+import matplotlib.pyplot as plt
+fig, axes = plt.subplots(1, 2)
+plot_profile(records[0], dirs[0], ax=axes[0])
+plot_profile(records[1], dirs[1], ax=axes[1])
+plt.show()
+
+fig.savefig("comparison.png", dpi=150, bbox_inches="tight")
 ```
 
 ---
