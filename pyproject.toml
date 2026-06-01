@@ -7,7 +7,7 @@ name = "remembrane"
 version = "0.1.0"
 description = "Scientific record store for membrane electrostatics"
 license = {file = "LICENSE"}
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0",
     "numpy>=1.24",
