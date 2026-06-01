@@ -79,6 +79,26 @@ class Registry:
                 records.append(MembraneRecord.from_yaml(d / "metadata.yaml"))
         return records
 
+    def rebuild_index(self) -> dict:
+        """Scan all record directories and rebuild index.json from metadata.yaml files.
+
+        Useful when index.json is corrupted, missing, or out of sync with disk.
+        Returns the new {record_id: scientific_hash} mapping that was written.
+        """
+        from remembrane.record import MembraneRecord
+        index: dict = {}
+        if self._records_dir.exists():
+            for d in sorted(self._records_dir.iterdir()):
+                meta = d / "metadata.yaml"
+                if d.is_dir() and meta.exists():
+                    try:
+                        rec = MembraneRecord.from_yaml(meta)
+                        index[str(rec.id)] = rec.scientific_hash
+                    except Exception:
+                        pass  # skip unreadable records; doctor will report them
+        self._save_index(index)
+        return index
+
     def _load_index(self) -> dict:
         if self._index_path.exists():
             return json.loads(self._index_path.read_text())

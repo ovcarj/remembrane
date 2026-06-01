@@ -220,22 +220,14 @@ def verify(ctx: click.Context, record_id: str) -> None:
         if not verify_artifact(d, artifact.path, artifact.sha256):
             errors.append(f"{name}: checksum mismatch or file missing")
 
-    # Array shape compatibility check
-    total_path = d / "potential_total.npz"
-    comp_path = d / "potential_components.npz"
-    if total_path.exists() and comp_path.exists():
-        total = np.load(total_path)
-        comp = np.load(comp_path)
-        if "z_nm" not in total or "phi_V" not in total:
-            errors.append("potential_total.npz: missing z_nm or phi_V keys")
-        if "z_nm" not in comp:
-            errors.append("potential_components.npz: missing z_nm key")
-        elif "z_nm" in total and total["z_nm"].shape != comp["z_nm"].shape:
-            errors.append("potential_total and potential_components have incompatible z grids")
+    errors, warnings = _verify_record(rec, d)
+
+    for e in errors:
+        click.echo(f"ERROR: {e}", err=True)
+    for w in warnings:
+        click.echo(f"WARNING: {w}")
 
     if errors:
-        for e in errors:
-            click.echo(f"ERROR: {e}", err=True)
         sys.exit(1)
     click.echo(f"OK: {record_id}")
 
@@ -460,6 +452,172 @@ def preview(pk: int | None, uuid: str | None, components: bool, title: str | Non
     else:
         import matplotlib.pyplot as plt
         plt.show()
+
+
+@cli.command(name="rebuild-index")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Show what would change without writing.")
+@click.pass_context
+def rebuild_index(ctx: click.Context, dry_run: bool) -> None:
+    """Rebuild index.json by scanning all record directories.
+
+    Use this if index.json is missing, corrupted, or out of sync with disk.
+    """
+    from remembrane.registry import Registry
+    reg = Registry.open(ctx.obj["db"])
+    old_index = reg._load_index()
+    new_index = reg.rebuild_index() if not dry_run else _compute_index(reg)
+
+    added   = {k for k in new_index if k not in old_index}
+    removed = {k for k in old_index if k not in new_index}
+    changed = {k for k in new_index if k in old_index and new_index[k] != old_index[k]}
+
+    for k in sorted(added):
+        click.echo(f"  + {k}")
+    for k in sorted(removed):
+        click.echo(f"  - {k}")
+    for k in sorted(changed):
+        click.echo(f"  ~ {k}  (hash changed)")
+
+    if not added and not removed and not changed:
+        click.echo("Index is already consistent — no changes.")
+    elif dry_run:
+        click.echo(f"Dry run: {len(added)} added, {len(removed)} removed, {len(changed)} changed.")
+    else:
+        click.echo(f"Rebuilt: {len(new_index)} record(s) indexed.")
+
+
+def _compute_index(reg) -> dict:
+    """Like rebuild_index but without writing (for dry-run)."""
+    from remembrane.record import MembraneRecord
+    index: dict = {}
+    if reg._records_dir.exists():
+        for d in sorted(reg._records_dir.iterdir()):
+            meta = d / "metadata.yaml"
+            if d.is_dir() and meta.exists():
+                try:
+                    rec = MembraneRecord.from_yaml(meta)
+                    index[str(rec.id)] = rec.scientific_hash
+                except Exception:
+                    pass
+    return index
+
+
+@cli.command()
+@click.option("--checksums", is_flag=True, default=False,
+              help="Also verify artifact checksums for every record (slower).")
+@click.pass_context
+def doctor(ctx: click.Context, checksums: bool) -> None:
+    """Check database health: index consistency and (optionally) artifact integrity.
+
+    Exit code 0 if healthy, 1 if any issues found.
+    """
+    from remembrane.registry import Registry
+    from remembrane.record import MembraneRecord
+    from pathlib import Path
+
+    reg = Registry.open(ctx.obj["db"])
+    index = reg._load_index()
+    issues: list[str] = []
+
+    # Check 1: every index entry has a directory + metadata.yaml
+    for rid in index:
+        d = reg.record_dir(rid)
+        if not d.exists():
+            issues.append(f"Index entry {rid}: directory missing")
+        elif not (d / "metadata.yaml").exists():
+            issues.append(f"Index entry {rid}: metadata.yaml missing")
+
+    # Check 2: every record directory has an index entry
+    if reg._records_dir.exists():
+        for d in reg._records_dir.iterdir():
+            if d.is_dir() and (d / "metadata.yaml").exists():
+                if d.name not in index:
+                    issues.append(f"Directory {d.name}: not in index (run rebuild-index)")
+
+    # Check 3: optional artifact verification
+    if checksums:
+        for rid in index:
+            d = reg.record_dir(rid)
+            if not d.exists():
+                continue
+            try:
+                rec = MembraneRecord.from_yaml(d / "metadata.yaml")
+            except Exception as e:
+                issues.append(f"{rid}: metadata.yaml unreadable: {e}")
+                continue
+            errors, warnings = _verify_record(rec, d)
+            for e in errors:
+                issues.append(f"{rid}: {e}")
+            for w in warnings:
+                click.echo(f"WARNING {rid}: {w}")
+
+    if issues:
+        for issue in issues:
+            click.echo(f"ISSUE: {issue}", err=True)
+        click.echo(f"\n{len(issues)} issue(s) found.", err=True)
+        sys.exit(1)
+    else:
+        n = len(index)
+        extra = " (checksums verified)" if checksums else ""
+        click.echo(f"Healthy: {n} record(s){extra}.")
+
+
+def _verify_record(rec, record_dir: "Path") -> tuple[list[str], list[str]]:
+    """Return (errors, warnings) for a single record's stored artifacts."""
+    import numpy as np
+    from remembrane.storage import verify_artifact
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    # Checksum verification
+    for name, artifact in [
+        ("potential_total", rec.artifacts.potential_total),
+        ("potential_components", rec.artifacts.potential_components),
+    ]:
+        if not verify_artifact(record_dir, artifact.path, artifact.sha256):
+            errors.append(f"{name}: checksum mismatch or file missing")
+
+    # Array shape and key compatibility
+    total_path = record_dir / "potential_total.npz"
+    comp_path  = record_dir / "potential_components.npz"
+    if total_path.exists() and comp_path.exists():
+        total = np.load(total_path)
+        comp  = np.load(comp_path)
+
+        if "z_nm" not in total or "phi_V" not in total:
+            errors.append("potential_total.npz: missing z_nm or phi_V keys")
+        if "z_nm" not in comp:
+            errors.append("potential_components.npz: missing z_nm key")
+        elif "z_nm" in total and total["z_nm"].shape != comp["z_nm"].shape:
+            errors.append("potential_total and potential_components have incompatible z grids")
+
+        # Scientific: all declared component groups must be present
+        if "phi_V" in total:
+            missing_groups = [
+                g for g in rec.potential_meta.component_groups if g not in comp
+            ]
+            if missing_groups:
+                errors.append(
+                    f"potential_components.npz: missing groups {missing_groups}"
+                )
+
+            # Scientific: component sum should approximate the total
+            phi_total = total["phi_V"]
+            present = [g for g in rec.potential_meta.component_groups if g in comp]
+            if present and phi_total.size > 0:
+                phi_sum = sum(comp[g] for g in present)
+                residual = np.abs(phi_sum - phi_total)
+                tolerance = 0.1 * (phi_total.max() - phi_total.min())
+                if tolerance > 0 and residual.mean() > tolerance:
+                    warnings.append(
+                        f"Component sum deviates from total by "
+                        f"{residual.mean():.3f} V mean "
+                        f"(tolerance {tolerance:.3f} V)"
+                    )
+
+    return errors, warnings
 
 
 def _composition_summary(rec) -> str:

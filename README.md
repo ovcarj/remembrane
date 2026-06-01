@@ -20,17 +20,21 @@ A curated scientific database for membrane electrostatic potential profiles.
 
 ## Installation
 
+`remembrane` is not yet on PyPI. Install directly from GitHub:
+
 ```bash
 # Core package (no AiiDA required)
-pip install remembrane
+pip install "git+https://github.com/ovcarj/remembrane.git"
 
 # With AiiDA import bridge
-pip install "remembrane[aiida]"
+pip install "remembrane[aiida] @ git+https://github.com/ovcarj/remembrane.git"
 
 # With plotting
-pip install "remembrane[plot]"
+pip install "remembrane[plot] @ git+https://github.com/ovcarj/remembrane.git"
 
-# Development (includes matplotlib)
+# Development install (clone first)
+git clone https://github.com/ovcarj/remembrane.git
+cd remembrane
 pip install -e ".[dev]"
 ```
 
