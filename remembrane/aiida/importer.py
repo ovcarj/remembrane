@@ -262,7 +262,7 @@ def _parse_lipid_ratio(spec: str) -> dict:
     """Parse CHARMM-GUI quick_bilayer composition strings.
 
     Handles both:
-      'POPE:POPC:CDL2=40:40:20'  (multi-lipid)
+      'POPE:POPC:TLCL2=40:40:20'  (multi-lipid)
       'POPC=128'                  (single lipid)
     """
     from remembrane.record import LipidCount
