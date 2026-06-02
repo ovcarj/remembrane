@@ -21,8 +21,10 @@ def parse_xvg(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
         if len(parts) < 2:
             continue
         try:
-            x_vals.append(float(parts[0]))
-            y_vals.append(float(parts[1]))
+            x = float(parts[0])
+            y = float(parts[1])
         except ValueError:
             continue
+        x_vals.append(x)
+        y_vals.append(y)
     return np.array(x_vals, dtype=float), np.array(y_vals, dtype=float)

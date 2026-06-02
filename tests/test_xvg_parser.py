@@ -59,3 +59,17 @@ def test_empty_file(tmp_path):
     x, y = parse_xvg(xvg)
     assert len(x) == 0
     assert len(y) == 0
+
+
+def test_non_numeric_y_skips_entire_line(tmp_path):
+    """If y value is non-numeric, neither x nor y should be appended (arrays must stay equal length)."""
+    xvg = tmp_path / "bad.xvg"
+    write_xvg(xvg, """\
+        0.0  1.0
+        0.5  NaN_text
+        1.0  2.0
+    """)
+    x, y = parse_xvg(xvg)
+    assert len(x) == len(y) == 2
+    np.testing.assert_array_almost_equal(x, [0.0, 1.0])
+    np.testing.assert_array_almost_equal(y, [1.0, 2.0])

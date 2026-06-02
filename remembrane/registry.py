@@ -54,7 +54,7 @@ class Registry:
             )
 
         record_dir = self._records_dir / str(record.id)
-        record_dir.mkdir(parents=True, exist_ok=False)
+        record_dir.mkdir(parents=True, exist_ok=True)
         record.to_yaml(record_dir / "metadata.yaml")
 
         index[str(record.id)] = record.scientific_hash
@@ -94,8 +94,9 @@ class Registry:
                     try:
                         rec = MembraneRecord.from_yaml(meta)
                         index[str(rec.id)] = rec.scientific_hash
-                    except Exception:
-                        pass  # skip unreadable records; doctor will report them
+                    except Exception as exc:
+                        import warnings
+                        warnings.warn(f"Skipping unreadable record at {meta}: {exc}")
         self._save_index(index)
         return index
 
