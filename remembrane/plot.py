@@ -129,17 +129,21 @@ def plot_comparison(
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _short_label(record: "MembraneRecord") -> str:
-    """Concise legend label: upper-leaflet composition · temperature · ion type."""
-    lipids = record.composition.upper_leaflet.lipids
-    if len(lipids) == 1:
-        name, entry = next(iter(lipids.items()))
-        comp = f"{name} {int(round(entry.fraction * 100))}%"
-    else:
-        parts = ":".join(
+    """Concise legend label: composition · temperature · ion type."""
+    def _leaflet_str(leaflet) -> str:
+        lipids = leaflet.lipids
+        if len(lipids) == 1:
+            name, entry = next(iter(lipids.items()))
+            return f"{name} {int(round(entry.fraction * 100))}%"
+        return ":".join(
             f"{name} {int(round(entry.fraction * 100))}%"
             for name, entry in lipids.items()
         )
-        comp = parts
+
+    upper_str = _leaflet_str(record.composition.upper_leaflet)
+    lower_str = _leaflet_str(record.composition.lower_leaflet)
+    comp = f"{upper_str} | {lower_str}" if upper_str != lower_str else upper_str
+
     temp = f"{record.composition.temperature_K:.0f} K"
     ion = record.composition.ion_type or ""
     parts_out = [comp, temp]

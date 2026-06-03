@@ -621,6 +621,9 @@ def _verify_record(rec, record_dir: "Path") -> tuple[list[str], list[str]]:
 
 
 def _composition_summary(rec) -> str:
-    upper = rec.composition.upper_leaflet.lipids
-    parts = "+".join(f"{n}:{v.fraction:.2f}" for n, v in upper.items())
-    return f"{rec.composition.force_field} T={rec.composition.temperature_K}K [{parts}]"
+    def _leaflet(leaflet) -> str:
+        return "+".join(f"{n}:{v.fraction:.2f}" for n, v in leaflet.lipids.items())
+    upper = _leaflet(rec.composition.upper_leaflet)
+    lower = _leaflet(rec.composition.lower_leaflet)
+    comp = f"{upper} | {lower}" if upper != lower else upper
+    return f"{rec.composition.force_field} T={rec.composition.temperature_K}K [{comp}]"

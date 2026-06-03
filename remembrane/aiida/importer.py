@@ -107,7 +107,7 @@ def from_potential_workchain(
     run_md_uuid = None
     build_membrane_uuid = None
 
-    # Auto-walk caller chain
+    # Walk caller chain upward (node called inside a parent workchain)
     caller = node.caller
     while caller is not None:
         label = getattr(caller, "process_label", "") or ""
@@ -118,6 +118,18 @@ def from_potential_workchain(
             build_node = caller
             build_membrane_uuid = str(caller.uuid)
         caller = caller.caller if hasattr(caller, "caller") else None
+
+    # Also search sibling children when node is the top-level orchestrator
+    # (e.g. MembraneElectrostaticsWorkChain passed directly)
+    if (run_md_node is None or build_node is None) and hasattr(node, "called"):
+        for child in node.called:
+            label = getattr(child, "process_label", "") or ""
+            if "RunMembraneMDWorkChain" in label and run_md_node is None:
+                run_md_node = child
+                run_md_uuid = str(child.uuid)
+            if "BuildMembraneWorkChain" in label and build_node is None:
+                build_node = child
+                build_membrane_uuid = str(child.uuid)
 
     # Fall back to explicit PKs when not in graph
     if run_md_node is None and run_md_pk is not None:
