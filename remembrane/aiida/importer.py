@@ -131,6 +131,20 @@ def from_potential_workchain(
                 build_node = child
                 build_membrane_uuid = str(child.uuid)
 
+    # Search siblings: children of the direct caller
+    # (handles ComputeMembranePotentialWorkChain called by MembraneElectrostaticsWorkChain)
+    if (run_md_node is None or build_node is None):
+        direct_caller = node.caller
+        if direct_caller is not None and hasattr(direct_caller, "called"):
+            for sibling in direct_caller.called:
+                label = getattr(sibling, "process_label", "") or ""
+                if "RunMembraneMDWorkChain" in label and run_md_node is None:
+                    run_md_node = sibling
+                    run_md_uuid = str(sibling.uuid)
+                if "BuildMembraneWorkChain" in label and build_node is None:
+                    build_node = sibling
+                    build_membrane_uuid = str(sibling.uuid)
+
     # Fall back to explicit PKs when not in graph
     if run_md_node is None and run_md_pk is not None:
         run_md_node = orm.load_node(run_md_pk)

@@ -129,9 +129,14 @@ def validate(ctx: click.Context, record_dir: str) -> None:
 @click.option("--pk", type=int, default=None, help="AiiDA PK (for 'aiida' source).")
 @click.option("--uuid", default=None, help="AiiDA UUID (for 'aiida' source).")
 @click.option("--path", default=None, help="Record directory path (for 'directory' source).")
+@click.option("--build-membrane-pk", type=int, default=None,
+              help="Explicit BuildMembraneWorkChain PK when not in automatic provenance graph.")
+@click.option("--run-md-pk", type=int, default=None,
+              help="Explicit RunMembraneMDWorkChain PK when not in automatic provenance graph.")
 @click.pass_context
 def import_record(ctx: click.Context, source: str, pk: int | None, uuid: str | None,
-                  path: str | None) -> None:
+                  path: str | None, build_membrane_pk: int | None,
+                  run_md_pk: int | None) -> None:
     """Import a record from a directory or AiiDA workchain."""
     from remembrane.registry import Registry, DuplicateRecordError
 
@@ -176,7 +181,11 @@ def import_record(ctx: click.Context, source: str, pk: int | None, uuid: str | N
             sys.exit(1)
         from remembrane.aiida.importer import ImportIncompleteError
         try:
-            rec, arrays = from_potential_workchain(identifier)
+            rec, arrays = from_potential_workchain(
+                identifier,
+                build_membrane_pk=build_membrane_pk,
+                run_md_pk=run_md_pk,
+            )
         except ImportIncompleteError as e:
             click.echo(f"ERROR: Import incomplete:\n{e}", err=True)
             sys.exit(1)
